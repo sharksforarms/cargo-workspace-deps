@@ -1,0 +1,6 @@
+[workspace]
+members = ["member1", "member2", "member3"]
+resolver = "2"
+
+[workspace.dependencies]
+serde = "1.0.150"
