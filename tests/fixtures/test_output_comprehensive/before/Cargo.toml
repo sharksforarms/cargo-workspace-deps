@@ -1,0 +1,8 @@
+[workspace]
+members = ["member1", "member2", "member3"]
+resolver = "2"
+
+[workspace.dependencies]
+# These are unused by any member
+tempfile = "3.0"
+regex = "1.10"

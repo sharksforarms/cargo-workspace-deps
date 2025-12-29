@@ -1,0 +1,9 @@
+[package]
+name = "member1"
+version = "0.1.0"
+edition = "2021"
+
+# This is a comment about dependencies
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }

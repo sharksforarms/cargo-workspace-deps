@@ -1,0 +1,16 @@
+[package]
+name = "member2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = { workspace = true }
+tokio = { version = "1.0", default-features = true }
+lazy_static = { workspace = true }
+
+[dev-dependencies]
+rstest = { workspace = true }
+
+[build-dependencies]
+bindgen = { workspace = true }

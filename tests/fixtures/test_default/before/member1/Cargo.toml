@@ -1,0 +1,12 @@
+[package]
+name = "member1"
+version = "0.1.0"
+edition = "2021"
+
+# This is a comment about dependencies
+[dependencies]
+serde = "1.0"
+anyhow = "1.0"
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["full"] }
