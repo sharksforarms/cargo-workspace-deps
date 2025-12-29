@@ -1,0 +1,9 @@
+[package]
+name = "member2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = "1.0"
+clap = "4.0"

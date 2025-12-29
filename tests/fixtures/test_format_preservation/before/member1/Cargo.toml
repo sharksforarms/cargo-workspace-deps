@@ -1,0 +1,11 @@
+[package]
+name = "member1"
+version = "0.1.0"
+edition = "2021"
+
+# Important comment about dependencies
+[dependencies]
+# This comment should be preserved
+serde = "1.0"
+anyhow = "1.0"
+existing-dep = "0.5.0"

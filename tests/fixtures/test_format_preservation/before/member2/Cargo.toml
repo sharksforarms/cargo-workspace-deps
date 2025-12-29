@@ -1,0 +1,9 @@
+[package]
+name = "member2"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = "1.0"
+anyhow = "1.0"
+existing-dep = "0.5.2"
