@@ -16,7 +16,7 @@ fn excludes_members_by_glob_pattern() -> Result<()> {
         workspace_path: Some(workspace.path.clone()),
         exclude: Vec::new(),
         min_members: 2,
-        exclude_members: vec!["test-*".to_string()],
+        exclude_members: vec![glob::Pattern::new("test-*").unwrap()],
         check: false,
         version_resolution_strategy: cargo_workspace_deps::VersionResolutionStrategy::Skip,
         output_format: OutputFormat::Text,

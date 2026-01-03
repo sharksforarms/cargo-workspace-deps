@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
 
-# Usage: ./create_test.sh <test_name> [member_count]
-# Example: ./create_test.sh version_conflicts 2
-
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <test_name> [member_count]"
     echo "Example: $0 version_conflicts 2"
@@ -118,9 +115,6 @@ else
     echo "  Test file already exists: tests/test_$TEST_NAME.rs"
 fi
 
-echo ""
-echo "✅ Test scaffolding created!"
-echo ""
 echo "Next steps:"
 echo "  1. Edit fixtures in: tests/fixtures/test_$TEST_NAME/"
 echo "     - before/: Set up initial workspace state"

@@ -1,3 +1,8 @@
 [workspace]
 members = ["member1", "member2"]
 resolver = "2"
+
+[workspace.dependencies]
+# This comment should be preserved
+# even across multiple lines
+existing-dep = "0.5.0"

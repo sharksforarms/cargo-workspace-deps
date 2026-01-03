@@ -2,7 +2,6 @@ mod test_helpers;
 
 use anyhow::Result;
 use cargo_workspace_deps::{Config, OutputFormat};
-use std::fs;
 use test_helpers::TestWorkspace;
 
 #[test]
@@ -25,10 +24,8 @@ fn running_twice_is_idempotent() -> Result<()> {
         output_callback: None,
     })?;
 
-    // Capture state after first run
-    let root_after_first = fs::read_to_string(workspace.path.join("Cargo.toml"))?;
-    let member1_after_first = fs::read_to_string(workspace.path.join("member1/Cargo.toml"))?;
-    let member2_after_first = fs::read_to_string(workspace.path.join("member2/Cargo.toml"))?;
+    // Verify first run produced expected output
+    workspace.assert_matches("test_idempotency/after")?;
 
     // Run again
     workspace.run(Config {
@@ -46,24 +43,8 @@ fn running_twice_is_idempotent() -> Result<()> {
         output_callback: None,
     })?;
 
-    // Capture state after second run
-    let root_after_second = fs::read_to_string(workspace.path.join("Cargo.toml"))?;
-    let member1_after_second = fs::read_to_string(workspace.path.join("member1/Cargo.toml"))?;
-    let member2_after_second = fs::read_to_string(workspace.path.join("member2/Cargo.toml"))?;
-
-    // Should be identical
-    assert_eq!(
-        root_after_first, root_after_second,
-        "Root Cargo.toml changed on second run"
-    );
-    assert_eq!(
-        member1_after_first, member1_after_second,
-        "Member1 Cargo.toml changed on second run"
-    );
-    assert_eq!(
-        member2_after_first, member2_after_second,
-        "Member2 Cargo.toml changed on second run"
-    );
+    // Verify second run produced identical output
+    workspace.assert_matches("test_idempotency/after")?;
 
     Ok(())
 }

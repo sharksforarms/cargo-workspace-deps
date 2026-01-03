@@ -2,8 +2,10 @@ mod test_helpers;
 
 use anyhow::Result;
 use cargo_workspace_deps::{Config, OutputFormat};
-use std::fs;
 use test_helpers::TestWorkspace;
+
+// TODO: Path deps are currently not consolidated. They remain in each member's Cargo.toml.
+// For now, we just verify that we don't touch them.
 
 #[test]
 fn skips_path_dependencies() -> Result<()> {
@@ -23,15 +25,6 @@ fn skips_path_dependencies() -> Result<()> {
         output_format: OutputFormat::Text,
         output_callback: None,
     })?;
-
-    // Verify path deps were NOT moved to workspace
-    let root_content = fs::read_to_string(workspace.path.join("Cargo.toml"))?;
-
-    // Should consolidate serde (version only)
-    assert!(root_content.contains("serde"));
-
-    // Should NOT consolidate my-local-crate (has path)
-    assert!(!root_content.contains("my-local-crate"));
 
     workspace.assert_matches("test_path_deps/after")?;
 
@@ -56,11 +49,6 @@ fn skips_mixed_version_and_path() -> Result<()> {
         output_format: OutputFormat::Text,
         output_callback: None,
     })?;
-
-    let root_content = fs::read_to_string(workspace.path.join("Cargo.toml"))?;
-
-    // Should NOT consolidate deps with both version and path
-    assert!(!root_content.contains("my-crate"));
 
     workspace.assert_matches("test_mixed_version_path/after")?;
 

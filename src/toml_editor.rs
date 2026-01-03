@@ -36,11 +36,11 @@ fn update_section_deps(
     if let Some(Item::Table(deps_table)) = workspace.get_mut(workspace_key) {
         for dep in section_deps {
             // Only write default-features if false (true is Cargo's default)
-            let needs_inline = dep.package.is_some()
-                || dep.registry.is_some()
-                || dep.default_features == Some(false);
+            let needs_inline =
+                dep.package.is_some() || dep.registry.is_some() || !dep.default_features;
 
-            if needs_inline {
+            // Build the value to insert/update
+            let new_value = if needs_inline {
                 let mut inline = InlineTable::new();
                 inline.insert("version", dep.version.as_str().into());
                 if let Some(package) = &dep.package {
@@ -49,19 +49,28 @@ fn update_section_deps(
                 if let Some(registry) = &dep.registry {
                     inline.insert("registry", registry.as_str().into());
                 }
-                if dep.default_features == Some(false) {
+                if !dep.default_features {
                     inline.insert("default-features", false.into());
                 }
-                deps_table.insert(&dep.name, value(inline));
+                value(inline)
             } else {
-                deps_table.insert(&dep.name, value(&dep.version));
+                value(&dep.version)
+            };
+
+            // Check if entry already exists
+            if let Some(existing_entry) = deps_table.get_mut(&dep.name) {
+                // Update the existing entry in-place to preserve comments
+                *existing_entry = new_value;
+            } else {
+                // Insert new entry
+                deps_table.insert(&dep.name, new_value);
             }
         }
     }
 }
 
 /// Add or update workspace dependencies in the root Cargo.toml
-pub fn update_workspace_dependencies(
+pub(crate) fn update_workspace_dependencies(
     manifest_path: &Path,
     common_deps: &[CommonDependency],
 ) -> Result<String> {
@@ -102,7 +111,7 @@ pub fn update_workspace_dependencies(
 }
 
 /// Update a member's Cargo.toml to use workspace dependencies
-pub fn update_member_dependencies(
+pub(crate) fn update_member_dependencies(
     manifest_path: &Path,
     common_deps: &[CommonDependency],
     member_name: &str,
@@ -130,13 +139,12 @@ pub fn update_member_dependencies(
             // Preserve fields like features, optional, etc. (version/package/registry/default-features go to workspace)
             match existing {
                 Item::Table(table) => {
-                    copy_preserved_fields!(inline, table.iter().filter_map(|(k, v)| {
-                        if let Item::Value(val) = v {
-                            Some((k, val))
-                        } else {
-                            None
-                        }
-                    }));
+                    copy_preserved_fields!(
+                        inline,
+                        table
+                            .iter()
+                            .filter_map(|(k, v)| v.as_value().map(|val| (k, val)))
+                    );
                 }
                 Item::Value(val) if val.is_inline_table() => {
                     if let Some(table) = val.as_inline_table() {
@@ -151,20 +159,4 @@ pub fn update_member_dependencies(
     }
 
     Ok(doc.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_inline_table_creation() {
-        let mut inline = InlineTable::new();
-        inline.insert("workspace", true.into());
-        let item = value(inline);
-
-        let rendered = format!("{}", item);
-        assert!(rendered.contains("workspace"));
-        assert!(rendered.contains("true"));
-    }
 }

@@ -1,69 +1,65 @@
-use anyhow::{Context, Result};
 use crate::VersionResolutionStrategy;
-use crate::dependency::{DependencyAnalysis, ConflictType};
+use crate::dependency::{ConflictType, DependencyAnalysis};
+use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::HashMap;
 
 /// Unified output structure that can be serialized to JSON or formatted as text
 #[derive(Debug, Clone, Serialize)]
-pub struct Output {
-    pub version: String,
-    pub workspace: WorkspaceInfo,
-    pub summary: Summary,
-    pub common_dependencies: Vec<Dependency>,
-    pub conflicts: Vec<Conflict>,
-    pub unused_workspace_dependencies: Vec<String>,
+pub(crate) struct Output {
+    pub(crate) workspace: WorkspaceInfo,
+    pub(crate) summary: Summary,
+    pub(crate) common_dependencies: Vec<Dependency>,
+    pub(crate) conflicts: Vec<Conflict>,
+    pub(crate) unused_workspace_dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WorkspaceInfo {
-    pub root: String,
-    pub member_count: usize,
+pub(crate) struct WorkspaceInfo {
+    pub(crate) root: String,
+    pub(crate) member_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Summary {
-    pub dependencies_to_consolidate: usize,
-    pub conflicts_resolved: usize,
-    pub conflicts_unresolved: usize,
-    pub unused_workspace_deps: usize,
+pub(crate) struct Summary {
+    pub(crate) dependencies_to_consolidate: usize,
+    pub(crate) conflicts_resolved: usize,
+    pub(crate) conflicts_unresolved: usize,
+    pub(crate) unused_workspace_deps: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Dependency {
-    pub name: String,
-    pub version: String,
-    pub section: String,
-    pub members: Vec<String>,
+pub(crate) struct Dependency {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) section: String,
+    pub(crate) members: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub package: Option<String>,
+    pub(crate) package: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub registry: Option<String>,
+    pub(crate) registry: Option<String>,
+    pub(crate) default_features: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_features: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resolved_from: Option<HashMap<String, Vec<String>>>,
+    pub(crate) resolved_from: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Conflict {
-    pub name: String,
-    pub section: String,
-    pub version_specs: Vec<VersionSpec>,
-    pub conflict_types: Vec<ConflictType>,
+pub(crate) struct Conflict {
+    pub(crate) name: String,
+    pub(crate) section: String,
+    pub(crate) version_specs: Vec<VersionSpec>,
+    pub(crate) conflict_types: Vec<ConflictType>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct VersionSpec {
-    pub version: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_features: Option<bool>,
-    pub members: Vec<String>,
+pub(crate) struct VersionSpec {
+    pub(crate) version: String,
+    pub(crate) default_features: bool,
+    pub(crate) members: Vec<String>,
 }
 
 impl Output {
-    /// Create a new Output from DependencyAnalysis
-    pub fn new(
+    pub(crate) fn new(
         analysis: &DependencyAnalysis,
         workspace_root: &str,
         member_count: usize,
@@ -75,7 +71,6 @@ impl Output {
             .count();
 
         Output {
-            version: "1".to_string(),
             workspace: WorkspaceInfo {
                 root: workspace_root.to_string(),
                 member_count,
@@ -123,7 +118,13 @@ impl Output {
     }
 
     /// Sort all arrays for deterministic output
-    pub fn sort(&mut self) {
+    pub(crate) fn sort(&mut self) {
+        self.sort_common_dependencies();
+        self.sort_conflicts();
+        self.unused_workspace_dependencies.sort();
+    }
+
+    fn sort_common_dependencies(&mut self) {
         // Sort common_dependencies by name
         self.common_dependencies.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -138,49 +139,54 @@ impl Output {
                 }
             }
         }
+    }
 
+    /// Sort conflicts and their version specs
+    fn sort_conflicts(&mut self) {
         // Sort conflicts by name
         self.conflicts.sort_by(|a, b| a.name.cmp(&b.name));
 
         // Sort version specs and members within conflicts
         for conflict in &mut self.conflicts {
             conflict.version_specs.sort_by(|a, b| {
-                match a.version.cmp(&b.version) {
-                    std::cmp::Ordering::Equal => a.default_features.cmp(&b.default_features),
-                    other => other,
-                }
+                a.version
+                    .cmp(&b.version)
+                    .then_with(|| a.default_features.cmp(&b.default_features))
             });
             for spec in &mut conflict.version_specs {
                 spec.members.sort();
             }
         }
-
-        // Sort unused workspace dependencies
-        self.unused_workspace_dependencies.sort();
     }
 
     /// Serialize to JSON format
-    pub fn to_json(&self) -> Result<String> {
-        let json = serde_json::to_string_pretty(self)
-            .context("Failed to serialize output to JSON")?;
+    pub(crate) fn to_json(&self) -> Result<String> {
+        let json =
+            serde_json::to_string_pretty(self).context("Failed to serialize output to JSON")?;
         Ok(format!("{}\n", json))
     }
 
     /// Format as human-readable text
-    pub fn to_text(&self, resolution_strategy: &VersionResolutionStrategy) -> String {
+    pub(crate) fn to_text(&self, resolution_strategy: &VersionResolutionStrategy) -> String {
         let mut output = String::new();
 
-        // Summary header
+        // Summary
         output.push_str("\nSummary:\n");
         output.push_str(&format!(
             "  {} dependencies to consolidate\n",
             self.summary.dependencies_to_consolidate
         ));
         if self.summary.conflicts_resolved > 0 {
-            output.push_str(&format!("  {} version conflicts resolved\n", self.summary.conflicts_resolved));
+            output.push_str(&format!(
+                "  {} version conflicts resolved\n",
+                self.summary.conflicts_resolved
+            ));
         }
         if self.summary.conflicts_unresolved > 0 {
-            output.push_str(&format!("  {} conflicts could not resolve\n", self.summary.conflicts_unresolved));
+            output.push_str(&format!(
+                "  {} conflicts could not resolve\n",
+                self.summary.conflicts_unresolved
+            ));
         }
         if self.summary.unused_workspace_deps > 0 {
             output.push_str(&format!(
@@ -210,7 +216,10 @@ impl Output {
                 .filter(|d| d.resolved_from.is_some())
                 .collect();
             if !resolved.is_empty() {
-                output.push_str(&format!("Resolved conflicts (using {:?}):\n", resolution_strategy));
+                output.push_str(&format!(
+                    "Resolved conflicts (using {:?}):\n",
+                    resolution_strategy
+                ));
                 for dep in &resolved {
                     if let Some(original_versions) = &dep.resolved_from {
                         let mut versions: Vec<_> = original_versions.keys().collect();
@@ -238,22 +247,42 @@ impl Output {
             output.push_str("Could not resolve:\n");
             for conflict in &self.conflicts {
                 // Build reason string from conflict types
-                let reasons: Vec<&str> = conflict.conflict_types.iter().map(|ct| match ct {
-                    ConflictType::VersionResolution => "version resolution",
-                    ConflictType::DefaultFeatures => "default-features differ",
-                }).collect();
+                let reasons: Vec<&str> = conflict
+                    .conflict_types
+                    .iter()
+                    .map(|ct| match ct {
+                        ConflictType::VersionResolution => "version resolution",
+                        ConflictType::DefaultFeatures => "default-features differ",
+                    })
+                    .collect();
                 let reason = reasons.join(", ");
 
                 output.push_str(&format!("  {} ({}):\n", conflict.name, reason));
 
+                // Check if this conflict involves default-features differences
+                let has_default_features_conflict = conflict
+                    .conflict_types
+                    .contains(&ConflictType::DefaultFeatures);
+
                 for spec in &conflict.version_specs {
-                    let version_display = match spec.default_features {
-                        Some(false) => format!("{} (default-features=false)", spec.version),
-                        Some(true) => format!("{} (default-features=true)", spec.version),
-                        None => spec.version.clone(),
+                    let version_display = if has_default_features_conflict {
+                        // Show default-features explicitly when it's part of the conflict
+                        if spec.default_features {
+                            format!("{} (default-features=true)", spec.version)
+                        } else {
+                            format!("{} (default-features=false)", spec.version)
+                        }
+                    } else if !spec.default_features {
+                        format!("{} (default-features=false)", spec.version)
+                    } else {
+                        spec.version.clone()
                     };
                     if !spec.members.is_empty() {
-                        output.push_str(&format!("    {} in: {}\n", version_display, spec.members.join(", ")));
+                        output.push_str(&format!(
+                            "    {} in: {}\n",
+                            version_display,
+                            spec.members.join(", ")
+                        ));
                     }
                 }
             }
@@ -271,9 +300,4 @@ impl Output {
 
         output
     }
-}
-
-/// Format a simple completion summary
-pub fn format_summary(common_deps_count: usize) -> String {
-    format!("Consolidated {} dependencies\n", common_deps_count)
 }

@@ -2,6 +2,12 @@
 name = "cargo-workspace-deps"
 version = "0.1.0"
 edition = "2024"
+description = "A Cargo subcommand that consolidates shared dependencies to workspace.dependencies"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sharksforarms/cargo-workspace-deps"
+readme = "README.md"
+keywords = ["cargo", "workspace", "dependencies", "cli", "tool"]
+categories = ["command-line-utilities", "development-tools::cargo-plugins"]
 
 [workspace]
 exclude = ["tests/fixtures"]

@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
 
-# Usage: ./diff_fixture.sh <test_name>
-# Example: ./diff_fixture.sh default
-
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <test_name>"
     echo "Example: $0 default"
@@ -39,19 +36,14 @@ find "$BEFORE_DIR" -name "Cargo.toml" -type f | sort | while read -r before_file
     after_file="$AFTER_DIR/$rel_path"
 
     if [ ! -f "$after_file" ]; then
-        echo "⚠️  File only in before: $rel_path"
+        echo "⚠️File only in before: $rel_path"
         continue
     fi
 
     if ! diff -q "$before_file" "$after_file" > /dev/null 2>&1; then
         echo "📝 $rel_path:"
         echo "----------------------------------------"
-        # Use git diff for colored output, fallback to regular diff with color
-        if command -v git > /dev/null 2>&1; then
-            git diff --no-index --color=always "$before_file" "$after_file" | tail -n +5 || true
-        else
-            diff -u --color=always "$before_file" "$after_file" || true
-        fi
+        git diff --no-index --color=always "$before_file" "$after_file" | tail -n +5 || true
         echo ""
     fi
 done
@@ -62,6 +54,6 @@ find "$AFTER_DIR" -name "Cargo.toml" -type f | sort | while read -r after_file; 
     before_file="$BEFORE_DIR/$rel_path"
 
     if [ ! -f "$before_file" ]; then
-        echo "⚠️  File only in after: $rel_path"
+        echo "⚠️File only in after: $rel_path"
     fi
 done

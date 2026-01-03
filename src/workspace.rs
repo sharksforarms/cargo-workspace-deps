@@ -3,19 +3,21 @@ use cargo_metadata::MetadataCommand;
 use std::path::PathBuf;
 
 #[derive(Debug)]
-pub struct WorkspaceInfo {
-    pub root_manifest: PathBuf,
-    pub members: Vec<MemberInfo>,
+pub(crate) struct WorkspaceInfo {
+    pub(crate) root_manifest: PathBuf,
+    pub(crate) members: Vec<MemberInfo>,
 }
 
 #[derive(Debug)]
-pub struct MemberInfo {
-    pub name: String,
-    pub manifest_path: PathBuf,
+pub(crate) struct MemberInfo {
+    pub(crate) name: String,
+    pub(crate) manifest_path: PathBuf,
 }
 
 /// Discover the workspace structure using the `cargo metadata` command
-pub fn discover_workspace(workspace_path: Option<&std::path::Path>) -> Result<WorkspaceInfo> {
+pub(crate) fn discover_workspace(
+    workspace_path: Option<&std::path::Path>,
+) -> Result<WorkspaceInfo> {
     let mut cmd = MetadataCommand::new();
     // Skip dependency resolution to avoid package cache lock
     // (we only need workspace structure)
@@ -52,21 +54,16 @@ pub fn discover_workspace(workspace_path: Option<&std::path::Path>) -> Result<Wo
 }
 
 impl WorkspaceInfo {
-    /// Filter out workspace members matching glob patterns
-    pub fn filter_by_patterns(&mut self, patterns: &[String]) -> usize {
+    /// Filter out workspace members matching pre-compiled glob patterns
+    pub(crate) fn filter_members_by_patterns(&mut self, patterns: &[glob::Pattern]) -> usize {
         if patterns.is_empty() {
             return 0;
         }
 
         let original_count = self.members.len();
 
-        self.members.retain(|member| {
-            !patterns.iter().any(|pattern| {
-                glob::Pattern::new(pattern)
-                    .map(|p| p.matches(&member.name))
-                    .unwrap_or(false)
-            })
-        });
+        self.members
+            .retain(|member| !patterns.iter().any(|pattern| pattern.matches(&member.name)));
 
         original_count - self.members.len()
     }

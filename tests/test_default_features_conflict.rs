@@ -2,7 +2,6 @@ mod test_helpers;
 
 use anyhow::Result;
 use cargo_workspace_deps::{Config, OutputFormat};
-use std::fs;
 use test_helpers::TestWorkspace;
 
 #[test]
@@ -24,13 +23,6 @@ fn detects_default_features_conflict() -> Result<()> {
         output_format: OutputFormat::Text,
         output_callback: None,
     })?;
-
-    // Should not be consolidated due to default-features conflict
-    let root_content = fs::read_to_string(workspace.path.join("Cargo.toml"))?;
-    assert!(
-        !root_content.contains("tokio"),
-        "tokio should not be consolidated"
-    );
 
     workspace.assert_matches("test_default_features_conflict/after")?;
 

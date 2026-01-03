@@ -77,15 +77,7 @@ fn files_equal(path1: &Path, path2: &Path) -> Result<bool> {
     let content1 = fs::read_to_string(path1)?;
     let content2 = fs::read_to_string(path2)?;
 
-    // Normalize line endings and trim trailing whitespace
-    let normalize = |s: &str| -> String {
-        s.lines()
-            .map(|line| line.trim_end())
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    Ok(normalize(&content1) == normalize(&content2))
+    Ok(content1 == content2)
 }
 
 /// Compare two directories recursively

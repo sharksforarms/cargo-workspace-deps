@@ -8,3 +8,4 @@ edition = "2021"
 # This comment should be preserved
 serde = { workspace = true }
 anyhow = { workspace = true }
+existing-dep = { workspace = true }

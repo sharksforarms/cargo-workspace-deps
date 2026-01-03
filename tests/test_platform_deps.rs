@@ -5,8 +5,8 @@ use cargo_workspace_deps::{Config, OutputFormat};
 use test_helpers::TestWorkspace;
 
 // TODO: Platform-specific dependencies (e.g., [target.'cfg(unix)'.dependencies]) are currently
-// not consolidated. They remain in each member's Cargo.toml. We could add support for
-// consolidating them into [workspace.target.'cfg(...)'.dependencies] in the future.
+// not consolidated. They remain in each member's Cargo.toml.
+// For now, we just verify that we don't touch them.
 
 #[test]
 fn handles_target_specific_dependencies() -> Result<()> {

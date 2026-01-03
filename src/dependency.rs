@@ -5,57 +5,50 @@ use std::fs;
 use std::path::Path;
 use toml_edit::{DocumentMut, Item};
 
+const WORKSPACE_MARKER: &str = "workspace";
+
+/// Result of parsing dependencies from a Cargo.toml file
+#[derive(Debug)]
+pub(crate) struct ParsedDependencies {
+    /// Dependencies with explicit versions that need consolidation
+    pub(crate) explicit_deps: Vec<DependencySpec>,
+    /// Dependencies already using { workspace = true }
+    pub(crate) workspace_refs: Vec<(String, DepSection)>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DepSection {
+pub(crate) enum DepSection {
     Dependencies,
     DevDependencies,
     BuildDependencies,
 }
 
 impl DepSection {
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         match self {
             DepSection::Dependencies => "dependencies",
             DepSection::DevDependencies => "dev-dependencies",
             DepSection::BuildDependencies => "build-dependencies",
         }
     }
-
-    pub fn workspace_key(&self) -> &str {
-        match self {
-            DepSection::Dependencies => "workspace.dependencies",
-            DepSection::DevDependencies => "workspace.dev-dependencies",
-            DepSection::BuildDependencies => "workspace.build-dependencies",
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DependencySpec {
-    pub name: String,
-    pub version: String,
-    pub section: DepSection,
-    pub package: Option<String>,
-    pub registry: Option<String>,
-    pub default_features: Option<bool>,
-}
-
-/// Parsed workspace dependency information
-#[derive(Debug, Clone)]
-pub struct WorkspaceDep {
-    pub name: String,
-    pub version: String,
-    pub section: DepSection,
-    pub package: Option<String>,
-    pub registry: Option<String>,
-    pub default_features: Option<bool>,
+pub(crate) struct DependencySpec {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) section: DepSection,
+    pub(crate) package: Option<String>,
+    pub(crate) registry: Option<String>,
+    pub(crate) default_features: bool,
 }
 
 /// All parsed dependency data from workspace and members
-pub struct WorkspaceData {
-    pub workspace_deps: HashMap<(String, DepSection), WorkspaceDep>,
-    pub member_deps: HashMap<String, Vec<DependencySpec>>,
-    pub workspace_refs: Vec<(String, DepSection)>, // Deps already using { workspace = true }
+pub(crate) struct WorkspaceData {
+    pub(crate) workspace_deps: HashMap<(String, DepSection), DependencySpec>,
+    pub(crate) member_deps: HashMap<String, Vec<DependencySpec>>,
+    // Deps already using { workspace = true }
+    pub(crate) workspace_refs: Vec<(String, DepSection)>,
 }
 
 /// Key for grouping dependencies that should share a workspace entry
@@ -65,117 +58,145 @@ struct WorkspaceDepKey {
     section: DepSection,
     package: Option<String>,
     registry: Option<String>,
-    // Note: default-features is NOT in the key because we want to detect conflicts
 }
 
 #[derive(Debug)]
-pub struct DependencyAnalysis {
+pub(crate) struct DependencyAnalysis {
     /// Dependencies that will be (or are already) consolidated to workspace.dependencies
     /// Includes both newly consolidated deps and resolved version conflicts
-    pub common_deps: Vec<CommonDependency>,
+    pub(crate) common_deps: Vec<CommonDependency>,
 
     /// Dependencies with version conflicts that could not be resolved
-    pub conflicts: Vec<ConflictingDependency>,
+    pub(crate) conflicts: Vec<ConflictingDependency>,
 
     /// Workspace dependencies that are not used by any member
-    pub unused_workspace_deps: Vec<String>,
+    pub(crate) unused_workspace_deps: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct CommonDependency {
-    pub name: String,
-    pub version: String,
-    pub section: DepSection,
+pub(crate) struct CommonDependency {
+    pub(crate) name: String,
+    pub(crate) version: String,
+    pub(crate) section: DepSection,
     /// Members that have this dependency (need conversion to { workspace = true })
-    pub members: Vec<String>,
+    pub(crate) members: Vec<String>,
     /// Renamed package (e.g., serde_crate = { package = "serde", ... })
-    pub package: Option<String>,
+    pub(crate) package: Option<String>,
     /// Custom registry for private crates
-    pub registry: Option<String>,
+    pub(crate) registry: Option<String>,
     /// Whether to disable default features
-    pub default_features: Option<bool>,
+    pub(crate) default_features: bool,
     /// Original version map if this was resolved from a conflict
-    /// None = single version, Some = resolved from multiple versions
-    pub resolved_from: Option<HashMap<String, Vec<String>>>,
+    pub(crate) resolved_from: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct VersionSpec {
-    pub version: String,
-    pub default_features: Option<bool>,
-    pub members: Vec<String>,
+pub(crate) struct VersionSpec {
+    pub(crate) version: String,
+    pub(crate) default_features: bool,
+    pub(crate) members: Vec<String>,
 }
 
-/// Internal structure for tracking version usage during analysis
 #[derive(Debug, Clone, Default)]
 struct VersionUsage {
-    /// Actual member names that use this version
+    /// Member names that use this version
     members: Vec<String>,
     /// Whether this version is defined in [workspace.dependencies]
     in_workspace: bool,
 }
 
+#[derive(Debug, Default)]
+struct DependencyTracker {
+    /// Maps (version, default_features) -> usage info
+    version_specs: HashMap<(String, bool), VersionUsage>,
+}
+
+impl DependencyTracker {
+    /// Get unique versions
+    fn unique_versions(&self) -> std::collections::HashSet<String> {
+        self.version_specs.keys().map(|(v, _)| v.clone()).collect()
+    }
+
+    /// Count of unique versions
+    fn version_count(&self) -> usize {
+        self.unique_versions().len()
+    }
+
+    /// Check if any version is defined in workspace
+    fn has_workspace(&self) -> bool {
+        self.version_specs.values().any(|usage| usage.in_workspace)
+    }
+
+    /// Get all members across all versions
+    fn all_members(&self) -> Vec<String> {
+        self.version_specs
+            .values()
+            .flat_map(|usage| &usage.members)
+            .cloned()
+            .collect()
+    }
+
+    /// Get all default_features values for a specific version
+    fn get_default_features_for_version(&self, version: &str) -> Vec<bool> {
+        self.version_specs
+            .iter()
+            .filter_map(|((v, df), _)| (v == version).then_some(*df))
+            .collect()
+    }
+
+    /// Build version map for version resolver (groups by version, aggregates members)
+    fn build_version_map(&self) -> HashMap<String, Vec<String>> {
+        let mut result: HashMap<String, VersionUsage> = HashMap::new();
+
+        for ((version, _df), usage) in &self.version_specs {
+            let entry = result.entry(version.clone()).or_default();
+            entry.members.extend(usage.members.iter().cloned());
+            entry.in_workspace |= usage.in_workspace;
+        }
+
+        result
+            .into_iter()
+            .map(|(version, usage)| (version, usage.to_member_list()))
+            .collect()
+    }
+}
+
 impl VersionUsage {
-    /// Convert to Vec<String> for compatibility with version resolver
     fn to_member_list(&self) -> Vec<String> {
         let mut result = self.members.clone();
         if self.in_workspace {
-            result.push("workspace".to_string());
+            result.push(WORKSPACE_MARKER.to_string());
         }
         result
     }
 }
 
-/// Convert a version map with VersionUsage to one with Vec<String>
-fn version_map_to_member_lists(
-    version_map: &HashMap<String, VersionUsage>,
-) -> HashMap<String, Vec<String>> {
-    version_map
-        .iter()
-        .map(|(version, usage)| (version.clone(), usage.to_member_list()))
-        .collect()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ConflictType {
+pub(crate) enum ConflictType {
     VersionResolution,
     DefaultFeatures,
 }
 
 #[derive(Debug, Clone)]
-pub struct ConflictingDependency {
-    pub name: String,
-    pub section: DepSection,
-    pub version_specs: Vec<VersionSpec>,
-    pub conflict_types: Vec<ConflictType>,
+pub(crate) struct ConflictingDependency {
+    pub(crate) name: String,
+    pub(crate) section: DepSection,
+    pub(crate) version_specs: Vec<VersionSpec>,
+    pub(crate) conflict_types: Vec<ConflictType>,
 }
 
-/// Helper macro to extract fields from table-like structures (InlineTable or Table)
-macro_rules! extract_from_table {
-    ($table:expr) => {{
-        if $table.contains_key("path") || $table.contains_key("git") {
-            return None;
-        }
-        let version = $table
-            .get("version")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())?;
-        let package = $table
-            .get("package")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let registry = $table
-            .get("registry")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let default_features = $table.get("default-features").and_then(|v| v.as_bool());
-        Some((version, package, registry, default_features))
-    }};
+/// Get common default_features value from a list, returning the unique value if all agree
+/// Returns true (the default) if there's disagreement
+fn get_common_default_features(values: &[bool]) -> bool {
+    if values.is_empty() || values.iter().all(|&v| v == values[0]) {
+        values.first().copied().unwrap_or(true)
+    } else {
+        true
+    }
 }
 
-/// Helper macro to extract optional version fields (for workspace deps)
-macro_rules! extract_version_fields {
+macro_rules! extract_fields {
     ($table:expr) => {{
         let version = $table
             .get("version")
@@ -194,29 +215,91 @@ macro_rules! extract_version_fields {
     }};
 }
 
-/// Extract dependency info from TOML item
-/// Returns (version, package, registry, default_features) or None if should skip (path or git)
-#[allow(clippy::type_complexity)]
-fn extract_dep_info(item: &Item) -> Option<(String, Option<String>, Option<String>, Option<bool>)> {
+/// Extract dependency spec from TOML item
+/// Returns DependencySpec or None if should skip
+fn extract_dependency_spec(name: &str, item: &Item, section: DepSection) -> Option<DependencySpec> {
     match item {
-        Item::Value(val) if val.is_inline_table() => val
-            .as_inline_table()
-            .and_then(|table| extract_from_table!(table)),
-        Item::Value(val) => val.as_str().map(|s| (s.to_string(), None, None, None)),
-        Item::Table(table) => extract_from_table!(table),
+        Item::Value(val) if val.is_inline_table() => {
+            let table = val.as_inline_table()?;
+            // Skip path or git dependencies
+            if table.contains_key("path") || table.contains_key("git") {
+                return None;
+            }
+            let (version, package, registry, default_features) = extract_fields!(table);
+            let version = version?; // Require version for member deps
+            Some(DependencySpec {
+                name: name.to_string(),
+                version,
+                section,
+                package,
+                registry,
+                default_features: default_features.unwrap_or(true),
+            })
+        }
+        Item::Value(val) => val.as_str().map(|s| DependencySpec {
+            name: name.to_string(),
+            version: s.to_string(),
+            section,
+            package: None,
+            registry: None,
+            default_features: true,
+        }),
+        Item::Table(table) => {
+            // Skip path or git dependencies
+            if table.contains_key("path") || table.contains_key("git") {
+                return None;
+            }
+            let (version, package, registry, default_features) = extract_fields!(table);
+            let version = version?; // Require version for member deps
+            Some(DependencySpec {
+                name: name.to_string(),
+                version,
+                section,
+                package,
+                registry,
+                default_features: default_features.unwrap_or(true),
+            })
+        }
         _ => None,
     }
 }
 
+/// Check if a dependency item uses workspace inheritance
+fn uses_workspace_inheritance(item: &Item) -> bool {
+    match item {
+        Item::Table(t) => t.contains_key("workspace"),
+        Item::Value(val) if val.is_inline_table() => val
+            .as_inline_table()
+            .map(|t| t.contains_key("workspace"))
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Process a single dependency section and extract dependency specs
+fn process_dependency_section(
+    table: &toml_edit::Table,
+    section: DepSection,
+    deps: &mut Vec<DependencySpec>,
+    workspace_refs: &mut Vec<(String, DepSection)>,
+) {
+    for (name, item) in table.iter() {
+        if uses_workspace_inheritance(item) {
+            workspace_refs.push((name.to_string(), section));
+            continue;
+        }
+
+        if let Some(dep_spec) = extract_dependency_spec(name, item, section) {
+            deps.push(dep_spec);
+        }
+    }
+}
+
 /// Parse dependencies from a Cargo.toml file
-/// Returns (explicit_deps, workspace_refs)
-/// - explicit_deps: deps with explicit versions (need consolidation)
-/// - workspace_refs: deps already using { workspace = true }
-#[allow(clippy::type_complexity)]
-pub fn parse_dependencies(
+pub(crate) fn parse_dependencies(
     manifest_path: &Path,
     sections: &[DepSection],
-) -> Result<(Vec<DependencySpec>, Vec<(String, DepSection)>)> {
+) -> Result<ParsedDependencies> {
     let content = fs::read_to_string(manifest_path)
         .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
 
@@ -229,44 +312,21 @@ pub fn parse_dependencies(
 
     for section in sections {
         if let Some(Item::Table(table)) = doc.get(section.as_str()) {
-            for (name, item) in table.iter() {
-                let uses_workspace = match item {
-                    Item::Table(t) => t.contains_key("workspace"),
-                    Item::Value(val) if val.is_inline_table() => val
-                        .as_inline_table()
-                        .map(|t| t.contains_key("workspace"))
-                        .unwrap_or(false),
-                    _ => false,
-                };
-
-                if uses_workspace {
-                    workspace_refs.push((name.to_string(), *section));
-                    continue;
-                }
-
-                if let Some((version, package, registry, default_features)) = extract_dep_info(item)
-                {
-                    deps.push(DependencySpec {
-                        name: name.to_string(),
-                        version,
-                        section: *section,
-                        package,
-                        registry,
-                        default_features: Some(default_features.unwrap_or(true)),
-                    });
-                }
-            }
+            process_dependency_section(table, *section, &mut deps, &mut workspace_refs);
         }
     }
 
-    Ok((deps, workspace_refs))
+    Ok(ParsedDependencies {
+        explicit_deps: deps,
+        workspace_refs,
+    })
 }
 
 /// Parse workspace dependencies from root Cargo.toml
-pub fn parse_workspace_dependencies(
+pub(crate) fn parse_workspace_dependencies(
     workspace_manifest: &Path,
     sections: &[DepSection],
-) -> Result<HashMap<(String, DepSection), WorkspaceDep>> {
+) -> Result<HashMap<(String, DepSection), DependencySpec>> {
     let content = fs::read_to_string(workspace_manifest)
         .with_context(|| format!("Failed to read {}", workspace_manifest.display()))?;
 
@@ -284,9 +344,9 @@ pub fn parse_workspace_dependencies(
                     let (version, package, registry, default_features) = match item {
                         Item::Value(val) if val.is_inline_table() => val
                             .as_inline_table()
-                            .map_or((None, None, None, None), |table| extract_version_fields!(table)),
+                            .map_or((None, None, None, None), |table| extract_fields!(table)),
                         Item::Value(val) => (val.as_str().map(|s| s.to_string()), None, None, None),
-                        Item::Table(table) => extract_version_fields!(table),
+                        Item::Table(table) => extract_fields!(table),
                         _ => (None, None, None, None),
                     };
 
@@ -294,13 +354,13 @@ pub fn parse_workspace_dependencies(
                         let key = (name.to_string(), *section);
                         workspace_deps.insert(
                             key,
-                            WorkspaceDep {
+                            DependencySpec {
                                 name: name.to_string(),
                                 version,
                                 section: *section,
                                 package,
                                 registry,
-                                default_features: Some(default_features.unwrap_or(true)),
+                                default_features: default_features.unwrap_or(true),
                             },
                         );
                     }
@@ -313,7 +373,7 @@ pub fn parse_workspace_dependencies(
 }
 
 /// Parse all workspace data (workspace deps + member deps)
-pub fn parse_workspace_data(
+pub(crate) fn parse_workspace_data(
     workspace_info: &crate::workspace::WorkspaceInfo,
     sections: &[DepSection],
 ) -> Result<WorkspaceData> {
@@ -323,11 +383,11 @@ pub fn parse_workspace_data(
     let mut all_workspace_refs = Vec::new();
 
     for member in &workspace_info.members {
-        let (deps, workspace_refs) = parse_dependencies(&member.manifest_path, sections)?;
-        if !deps.is_empty() {
-            member_deps.insert(member.name.clone(), deps);
+        let parsed = parse_dependencies(&member.manifest_path, sections)?;
+        if !parsed.explicit_deps.is_empty() {
+            member_deps.insert(member.name.clone(), parsed.explicit_deps);
         }
-        all_workspace_refs.extend(workspace_refs);
+        all_workspace_refs.extend(parsed.workspace_refs);
     }
 
     Ok(WorkspaceData {
@@ -337,46 +397,170 @@ pub fn parse_workspace_data(
     })
 }
 
-/// Check if we should consolidate based on workspace presence and member count
 fn should_consolidate(has_workspace: bool, member_count: usize, min_members: usize) -> bool {
-    (has_workspace && member_count > 0) || (!has_workspace && member_count >= min_members)
+    // Consolidate if already in workspace and has any users,
+    // or if not in workspace but meets minimum member threshold
+    has_workspace && member_count > 0 || member_count >= min_members
 }
 
-/// Check if there's a default-features conflict for the given version
-fn has_default_features_conflict(
+/// Populate tracker with workspace dependency information
+fn track_workspace_dependencies(
+    trackers: &mut HashMap<WorkspaceDepKey, DependencyTracker>,
+    workspace_deps: &HashMap<(String, DepSection), DependencySpec>,
+) {
+    for ((name, section), ws_dep) in workspace_deps {
+        let key = WorkspaceDepKey {
+            name: name.clone(),
+            section: *section,
+            package: ws_dep.package.clone(),
+            registry: ws_dep.registry.clone(),
+        };
+
+        let tracker = trackers.entry(key).or_default();
+
+        tracker
+            .version_specs
+            .entry((ws_dep.version.clone(), ws_dep.default_features))
+            .or_default()
+            .in_workspace = true;
+    }
+}
+
+/// Populate tracker with member dependency information
+fn track_member_dependencies(
+    trackers: &mut HashMap<WorkspaceDepKey, DependencyTracker>,
+    member_deps: &HashMap<String, Vec<DependencySpec>>,
+) {
+    for (member_name, deps) in member_deps {
+        for dep in deps {
+            let key = WorkspaceDepKey {
+                name: dep.name.clone(),
+                section: dep.section,
+                package: dep.package.clone(),
+                registry: dep.registry.clone(),
+            };
+
+            let tracker = trackers.entry(key).or_default();
+
+            tracker
+                .version_specs
+                .entry((dep.version.clone(), dep.default_features))
+                .or_default()
+                .members
+                .push(member_name.clone());
+        }
+    }
+}
+
+/// Process a dependency and resolve to a common version
+fn process_dependency(
     key: &WorkspaceDepKey,
-    version: &str,
-    default_features_map: &HashMap<(WorkspaceDepKey, String), Vec<Option<bool>>>,
-) -> bool {
-    let df_key = (key.clone(), version.to_string());
-    let df_values = default_features_map.get(&df_key).cloned().unwrap_or_default();
-    let unique_df: std::collections::HashSet<_> = df_values.into_iter().collect();
-    unique_df.len() > 1
+    tracker: &DependencyTracker,
+    has_workspace: bool,
+    all_members: &[String],
+    min_members: usize,
+    resolution_strategy: &crate::VersionResolutionStrategy,
+) -> Result<Option<CommonDependency>, ConflictingDependency> {
+    let mut conflict_types = Vec::new();
+    let version_count = tracker.version_count();
+
+    // Try to resolve version
+    let version_resolution = if version_count == 1 {
+        let version = tracker.unique_versions().into_iter().next().unwrap();
+        Some((version, None))
+    } else {
+        let member_lists_map = tracker.build_version_map();
+        match crate::version_resolver::resolve_version_conflict(
+            &member_lists_map,
+            resolution_strategy,
+        ) {
+            Ok((version, _)) => Some((version, Some(member_lists_map))),
+            Err(_) => {
+                conflict_types.push(ConflictType::VersionResolution);
+                None
+            }
+        }
+    };
+
+    // Check for default-features conflicts
+    let df_values: Vec<bool> = if let Some((ref version, _)) = version_resolution {
+        // Check on the resolved version
+        tracker.get_default_features_for_version(version)
+    } else {
+        // Version resolution failed - check across all versions
+        tracker.version_specs.keys().map(|(_, df)| *df).collect()
+    };
+
+    let unique: std::collections::HashSet<_> = df_values.iter().copied().collect();
+    if unique.len() > 1 {
+        conflict_types.push(ConflictType::DefaultFeatures);
+    }
+
+    // If any conflicts found, return error
+    if !conflict_types.is_empty() {
+        return Err(create_conflict(key, &tracker.version_specs, conflict_types));
+    }
+
+    // Extract resolved version (we know it exists because no conflicts)
+    let (resolved_version, resolved_from) = version_resolution.unwrap();
+    let common_default_features = get_common_default_features(&df_values);
+
+    // Create common dependency if meets consolidation threshold
+    if should_consolidate(has_workspace, all_members.len(), min_members) {
+        Ok(Some(CommonDependency {
+            name: key.name.clone(),
+            version: resolved_version,
+            section: key.section,
+            members: all_members.to_vec(),
+            package: key.package.clone(),
+            registry: key.registry.clone(),
+            default_features: common_default_features,
+            resolved_from,
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
-/// Create a ConflictingDependency with the given conflict types
-#[allow(clippy::type_complexity)]
+/// Find workspace dependencies that are not used by any member
+fn find_unused_workspace_deps(
+    common_deps: &[CommonDependency],
+    workspace_refs: &[(String, DepSection)],
+    workspace_deps: &HashMap<(String, DepSection), DependencySpec>,
+) -> Vec<String> {
+    let mut used_deps: std::collections::HashSet<(String, DepSection)> =
+        std::collections::HashSet::new();
+
+    for common_dep in common_deps {
+        used_deps.insert((common_dep.name.clone(), common_dep.section));
+    }
+
+    for (name, section) in workspace_refs {
+        used_deps.insert((name.clone(), *section));
+    }
+
+    workspace_deps
+        .iter()
+        .filter(|((name, section), _)| !used_deps.contains(&(name.clone(), *section)))
+        .map(|((name, _), _)| name.clone())
+        .collect()
+}
+
 fn create_conflict(
     key: &WorkspaceDepKey,
-    version_spec_map: &HashMap<WorkspaceDepKey, HashMap<(String, Option<bool>), VersionUsage>>,
+    version_spec_map: &HashMap<(String, bool), VersionUsage>,
     conflict_types: Vec<ConflictType>,
 ) -> ConflictingDependency {
-    let version_specs_map = version_spec_map.get(key).cloned().unwrap_or_default();
-    let version_specs = version_specs_map
-        .into_iter()
+    let version_specs = version_spec_map
+        .iter()
         .map(|((version, default_features), usage)| {
-            // Build members list: include actual members, and optionally "workspace" marker
             let mut members = usage.members.clone();
-            if usage.in_workspace && members.is_empty() {
-                // Only workspace, no member uses this version
-                members.push("workspace".to_string());
-            } else if usage.in_workspace {
-                // Both workspace and members
-                members.push("workspace".to_string());
+            if usage.in_workspace {
+                members.push(WORKSPACE_MARKER.to_string());
             }
             VersionSpec {
-                version,
-                default_features,
+                version: version.clone(),
+                default_features: *default_features,
                 members,
             }
         })
@@ -390,198 +574,52 @@ fn create_conflict(
 }
 
 /// Analyze all aspects of workspace dependencies in one pass
-#[allow(clippy::type_complexity)]
-pub fn analyze_workspace(
+pub(crate) fn analyze_workspace(
     data: &WorkspaceData,
     exclude: &[String],
     min_members: usize,
     resolution_strategy: &crate::VersionResolutionStrategy,
 ) -> Result<DependencyAnalysis> {
-    let mut dep_map: HashMap<WorkspaceDepKey, HashMap<String, VersionUsage>> = HashMap::new();
-    let mut default_features_map: HashMap<(WorkspaceDepKey, String), Vec<Option<bool>>> =
-        HashMap::new();
-    let mut version_spec_map: HashMap<WorkspaceDepKey, HashMap<(String, Option<bool>), VersionUsage>> =
-        HashMap::new();
+    let mut dep_trackers: HashMap<WorkspaceDepKey, DependencyTracker> = HashMap::new();
 
-    for ((name, section), ws_dep) in &data.workspace_deps {
-        let key = WorkspaceDepKey {
-            name: name.clone(),
-            section: *section,
-            package: ws_dep.package.clone(),
-            registry: ws_dep.registry.clone(),
-        };
+    // Track workspace dependencies
+    track_workspace_dependencies(&mut dep_trackers, &data.workspace_deps);
 
-        dep_map
-            .entry(key.clone())
-            .or_default()
-            .entry(ws_dep.version.clone())
-            .or_default()
-            .in_workspace = true;
+    // Track member dependencies
+    track_member_dependencies(&mut dep_trackers, &data.member_deps);
 
-        default_features_map
-            .entry((key.clone(), ws_dep.version.clone()))
-            .or_default()
-            .push(ws_dep.default_features);
-
-        // Track version spec for conflict reporting
-        version_spec_map
-            .entry(key)
-            .or_default()
-            .entry((ws_dep.version.clone(), ws_dep.default_features))
-            .or_default()
-            .in_workspace = true;
-    }
-
-    for (member_name, deps) in &data.member_deps {
-        for dep in deps {
-            let key = WorkspaceDepKey {
-                name: dep.name.clone(),
-                section: dep.section,
-                package: dep.package.clone(),
-                registry: dep.registry.clone(),
-            };
-
-            dep_map
-                .entry(key.clone())
-                .or_default()
-                .entry(dep.version.clone())
-                .or_default()
-                .members
-                .push(member_name.clone());
-
-            default_features_map
-                .entry((key.clone(), dep.version.clone()))
-                .or_default()
-                .push(dep.default_features);
-
-            // Track version spec for conflict reporting
-            version_spec_map
-                .entry(key)
-                .or_default()
-                .entry((dep.version.clone(), dep.default_features))
-                .or_default()
-                .members
-                .push(member_name.clone());
-        }
-    }
-
+    // Process each tracked dependency
     let mut common_deps = Vec::new();
     let mut conflicts = Vec::new();
 
-    for (key, version_map) in dep_map {
+    for (key, tracker) in dep_trackers {
         if exclude.contains(&key.name) {
             continue;
         }
 
-        let has_workspace = version_map
-            .values()
-            .any(|usage| usage.in_workspace);
+        let has_workspace = tracker.has_workspace();
+        let all_members = tracker.all_members();
 
-        let all_real_members: Vec<String> = version_map
-            .values()
-            .flat_map(|usage| usage.members.iter())
-            .cloned()
-            .collect();
+        // Process dependency
+        let result = process_dependency(
+            &key,
+            &tracker,
+            has_workspace,
+            &all_members,
+            min_members,
+            resolution_strategy,
+        );
 
-        if version_map.len() == 1 {
-            let version = version_map.keys().next().unwrap().clone();
-
-            // Check for default-features conflict
-            if has_default_features_conflict(&key, &version, &default_features_map) {
-                let conflict = create_conflict(&key, &version_spec_map, vec![ConflictType::DefaultFeatures]);
-                conflicts.push(conflict);
-                continue;
-            }
-
-            let df_key = (key.clone(), version.clone());
-            let df_values = default_features_map.get(&df_key).cloned().unwrap_or_default();
-            let unique_df: std::collections::HashSet<_> = df_values.into_iter().collect();
-            let common_default_features = unique_df.into_iter().next().flatten();
-
-            if should_consolidate(has_workspace, all_real_members.len(), min_members) {
-                common_deps.push(CommonDependency {
-                    name: key.name,
-                    version,
-                    section: key.section,
-                    members: all_real_members,
-                    package: key.package,
-                    registry: key.registry,
-                    default_features: common_default_features,
-                    resolved_from: None,
-                });
-            }
-        } else {
-            // Convert VersionUsage map to Vec<String> map for version resolver
-            let member_lists_map = version_map_to_member_lists(&version_map);
-
-            match crate::version_resolver::resolve_version_conflict(
-                &member_lists_map,
-                resolution_strategy,
-            ) {
-                Ok((resolved_version, _)) => {
-                    // Check for default-features conflict after resolving version
-                    if has_default_features_conflict(&key, &resolved_version, &default_features_map) {
-                        let conflict = create_conflict(&key, &version_spec_map, vec![ConflictType::DefaultFeatures]);
-                        conflicts.push(conflict);
-                        continue;
-                    }
-
-                    let df_key = (key.clone(), resolved_version.clone());
-                    let df_values = default_features_map.get(&df_key).cloned().unwrap_or_default();
-                    let unique_df: std::collections::HashSet<_> = df_values.into_iter().collect();
-                    let common_default_features = unique_df.into_iter().next().flatten();
-
-                    if should_consolidate(has_workspace, all_real_members.len(), min_members) {
-                        common_deps.push(CommonDependency {
-                            name: key.name.clone(),
-                            version: resolved_version,
-                            section: key.section,
-                            members: all_real_members,
-                            package: key.package.clone(),
-                            registry: key.registry.clone(),
-                            default_features: common_default_features,
-                            resolved_from: Some(member_lists_map),
-                        });
-                    }
-                }
-                Err(_) => {
-                    // Version resolution failed - check if there's also a default-features conflict
-                    let mut conflict_types = vec![ConflictType::VersionResolution];
-
-                    // Check if there's also a default-features conflict across ALL versions
-                    let all_df_values: Vec<Option<bool>> = default_features_map
-                        .iter()
-                        .filter(|((k, _), _)| k == &key)
-                        .flat_map(|(_, values)| values.clone())
-                        .collect();
-                    let unique_df: std::collections::HashSet<_> = all_df_values.into_iter().collect();
-                    if unique_df.len() > 1 {
-                        conflict_types.push(ConflictType::DefaultFeatures);
-                    }
-
-                    let conflict = create_conflict(&key, &version_spec_map, conflict_types);
-                    conflicts.push(conflict);
-                }
-            }
+        match result {
+            Ok(Some(dep)) => common_deps.push(dep),
+            Ok(None) => {} // Doesn't meet consolidation conditions
+            Err(conflict) => conflicts.push(conflict),
         }
     }
 
-    let mut used_deps = std::collections::HashSet::new();
-
-    for common_dep in &common_deps {
-        used_deps.insert(format!("{}::{:?}", common_dep.name, common_dep.section));
-    }
-
-    for (name, section) in &data.workspace_refs {
-        used_deps.insert(format!("{}::{:?}", name, section));
-    }
-
-    let unused_workspace_deps: Vec<String> = data
-        .workspace_deps
-        .iter()
-        .filter(|((name, section), _)| !used_deps.contains(&format!("{}::{:?}", name, section)))
-        .map(|((name, _), _)| name.clone())
-        .collect();
+    // Find unused workspace dependencies
+    let unused_workspace_deps =
+        find_unused_workspace_deps(&common_deps, &data.workspace_refs, &data.workspace_deps);
 
     Ok(DependencyAnalysis {
         common_deps,
@@ -625,7 +663,7 @@ serde = "1.0"
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::inline_table_version(
@@ -640,7 +678,7 @@ serde = { version = "1.0" }
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::table_format_version(
@@ -655,7 +693,7 @@ version = "1.0"
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::multiple_dependencies(
@@ -673,7 +711,7 @@ tokio = { version = "1.0" }
                 section: DepSection::Dependencies,
                 package: None,
                 registry: None,
-                default_features: Some(true),
+                default_features: true,
             },
             DependencySpec {
                 name: "anyhow".into(),
@@ -681,7 +719,7 @@ tokio = { version = "1.0" }
                 section: DepSection::Dependencies,
                 package: None,
                 registry: None,
-                default_features: Some(true),
+                default_features: true,
             },
             DependencySpec {
                 name: "tokio".into(),
@@ -689,7 +727,7 @@ tokio = { version = "1.0" }
                 section: DepSection::Dependencies,
                 package: None,
                 registry: None,
-                default_features: Some(true),
+                default_features: true,
             },
         ]
     )]
@@ -705,7 +743,7 @@ serde_crate = { package = "serde", version = "1.0" }
             section: DepSection::Dependencies,
             package: Some("serde".into()),
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::custom_registry(
@@ -720,7 +758,7 @@ my_crate = { version = "1.0", registry = "my-registry" }
             section: DepSection::Dependencies,
             package: None,
             registry: Some("my-registry".into()),
-            default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::dev_dependencies(
@@ -735,7 +773,7 @@ rstest = "0.23"
             section: DepSection::DevDependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::build_dependencies(
@@ -750,7 +788,7 @@ cc = "1.0"
             section: DepSection::BuildDependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::multiple_sections(
@@ -772,7 +810,7 @@ cc = "1.0"
                 section: DepSection::Dependencies,
                 package: None,
                 registry: None,
-                default_features: Some(true),
+                default_features: true,
             },
             DependencySpec {
                 name: "rstest".into(),
@@ -780,7 +818,7 @@ cc = "1.0"
                 section: DepSection::DevDependencies,
                 package: None,
                 registry: None,
-                default_features: Some(true),
+                default_features: true,
             },
             DependencySpec {
                 name: "cc".into(),
@@ -788,7 +826,7 @@ cc = "1.0"
                 section: DepSection::BuildDependencies,
                 package: None,
                 registry: None,
-                default_features: Some(true),
+                default_features: true,
             },
         ]
     )]
@@ -805,7 +843,7 @@ anyhow = "1.0"
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::path_deps_skipped(
@@ -821,7 +859,7 @@ serde = "1.0"
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::git_deps_skipped(
@@ -837,7 +875,7 @@ serde = "1.0"
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::empty_section(
@@ -864,7 +902,7 @@ serde = { version = "1.0", features = ["derive"] }
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::version_with_optional(
@@ -879,7 +917,7 @@ serde = { version = "1.0", optional = true }
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::version_with_default_features(
@@ -894,7 +932,7 @@ serde = { version = "1.0", default-features = false }
             section: DepSection::Dependencies,
             package: None,
             registry: None,
-            default_features: Some(false),
+            default_features: false,
         }]
     )]
     #[case::complex_dependency(
@@ -909,7 +947,7 @@ my_crate = { package = "real-crate", version = "2.0", registry = "custom", featu
             section: DepSection::Dependencies,
             package: Some("real-crate".into()),
             registry: Some("custom".into()),
-                default_features: Some(true),
+            default_features: true,
         }]
     )]
     #[case::path_and_version_skipped(
@@ -935,10 +973,10 @@ my_crate = { git = "https://github.com/example/repo", version = "1.0" }
     ) -> Result<()> {
         let (_temp_dir, manifest_path) = create_test_manifest(toml_content)?;
 
-        let (deps, _workspace_refs) = parse_dependencies(&manifest_path, &sections)?;
+        let parsed = parse_dependencies(&manifest_path, &sections)?;
 
         // Sort both vectors by name for consistent comparison
-        let mut deps = deps;
+        let mut deps = parsed.explicit_deps;
         let mut expected_specs = expected;
         deps.sort_by(|a, b| a.name.cmp(&b.name));
         expected_specs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -956,7 +994,8 @@ my_crate = { git = "https://github.com/example/repo", version = "1.0" }
     fn test_invalid_toml() {
         let (_temp_dir, manifest_path) = create_test_manifest("not valid toml [[[").unwrap();
         let result = parse_dependencies(&manifest_path, &[DepSection::Dependencies]);
-        assert!(result.is_err(), "Should fail on invalid TOML");
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Failed to parse TOML"));
     }
 
     #[test]
@@ -965,6 +1004,7 @@ my_crate = { git = "https://github.com/example/repo", version = "1.0" }
             std::path::Path::new("/nonexistent/path/Cargo.toml"),
             &[DepSection::Dependencies],
         );
-        assert!(result.is_err(), "Should fail on missing file");
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Failed to read"));
     }
 }

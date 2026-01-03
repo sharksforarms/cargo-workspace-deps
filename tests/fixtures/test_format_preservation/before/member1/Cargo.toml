@@ -8,3 +8,4 @@ edition = "2021"
 # This comment should be preserved
 serde = "1.0"
 anyhow = "1.0"
+existing-dep = "0.5.0"
