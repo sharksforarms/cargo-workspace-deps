@@ -2,7 +2,6 @@ mod test_helpers;
 
 use anyhow::Result;
 use cargo_workspace_deps::{Config, OutputFormat};
-use std::fs;
 use test_helpers::TestWorkspace;
 
 #[test]
@@ -23,11 +22,6 @@ fn preserves_comments_and_formatting() -> Result<()> {
         output_format: OutputFormat::Text,
         output_callback: None,
     })?;
-
-    // Check that specific comments are preserved
-    let member1_content = fs::read_to_string(workspace.path.join("member1/Cargo.toml"))?;
-    assert!(member1_content.contains("# Important comment about dependencies"));
-    assert!(member1_content.contains("# This comment should be preserved"));
 
     workspace.assert_matches("test_format_preservation/after")?;
 

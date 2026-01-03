@@ -2,7 +2,6 @@ mod test_helpers;
 
 use anyhow::Result;
 use cargo_workspace_deps::{Config, OutputFormat};
-use std::fs;
 use test_helpers::TestWorkspace;
 
 #[test]
@@ -24,12 +23,7 @@ fn skips_excluded_dependencies() -> Result<()> {
         output_callback: None,
     })?;
 
-    // Verify serde was NOT moved to workspace
-    let root_content = fs::read_to_string(workspace.path.join("Cargo.toml"))?;
-    assert!(!root_content.contains("[workspace.dependencies]") || !root_content.contains("serde"));
-
-    // Verify anyhow WAS moved to workspace
-    assert!(root_content.contains("anyhow"));
+    workspace.assert_matches("test_exclude/after")?;
 
     Ok(())
 }
