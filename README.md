@@ -17,7 +17,7 @@ This reduces duplication and ensures version consistency across your Cargo works
 cargo install cargo-workspace-deps --locked
 ```
 
-### `cargo install` ([`master`](https://github.com/sharksforarms/cargo-workspace-deps/tree/master))
+### `cargo install` ([`main`](https://github.com/sharksforarms/cargo-workspace-deps/tree/main))
 
 ```
 cargo install --git https://github.com/sharksforarms/cargo-workspace-deps --locked
