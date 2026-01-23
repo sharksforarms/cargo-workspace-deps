@@ -31,9 +31,37 @@ fn update_workspace_deps_table(workspace: &mut Table, deps: &[&CommonDependency]
 
     if let Some(Item::Table(deps_table)) = workspace.get_mut(WORKSPACE_DEPS_KEY) {
         for dep in deps {
+            // Collect preserved fields from existing entry (if any)
+            let mut preserved_fields: Vec<(String, toml_edit::Value)> = Vec::new();
+            if let Some(existing) = deps_table.get(&dep.name) {
+                match existing {
+                    Item::Table(table) => {
+                        for (k, v) in table.iter() {
+                            if should_preserve_field(k) {
+                                if let Some(val) = v.as_value() {
+                                    preserved_fields.push((k.to_string(), val.clone()));
+                                }
+                            }
+                        }
+                    }
+                    Item::Value(val) if val.is_inline_table() => {
+                        if let Some(table) = val.as_inline_table() {
+                            for (k, v) in table.iter() {
+                                if should_preserve_field(k) {
+                                    preserved_fields.push((k.to_string(), v.clone()));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // Only write default-features if false (true is Cargo's default)
-            let needs_inline =
-                dep.package.is_some() || dep.registry.is_some() || !dep.default_features;
+            let needs_inline = dep.package.is_some()
+                || dep.registry.is_some()
+                || !dep.default_features
+                || !preserved_fields.is_empty();
 
             // Build the value to insert/update
             let new_value = if needs_inline {
@@ -48,6 +76,10 @@ fn update_workspace_deps_table(workspace: &mut Table, deps: &[&CommonDependency]
                 if !dep.default_features {
                     inline.insert("default-features", false.into());
                 }
+                // Add preserved fields from existing entry
+                for (k, v) in preserved_fields {
+                    inline.insert(&k, v);
+                }
                 value(inline)
             } else {
                 value(&dep.version)
@@ -55,10 +87,8 @@ fn update_workspace_deps_table(workspace: &mut Table, deps: &[&CommonDependency]
 
             // Check if entry already exists
             if let Some(existing_entry) = deps_table.get_mut(&dep.name) {
-                // Update the existing entry in-place to preserve comments
                 *existing_entry = new_value;
             } else {
-                // Insert new entry
                 deps_table.insert(&dep.name, new_value);
             }
         }
