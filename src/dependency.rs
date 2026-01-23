@@ -364,6 +364,12 @@ pub(crate) fn parse_workspace_dependencies(
     Ok(workspace_deps)
 }
 
+const ALL_SECTIONS: &[DepSection] = &[
+    DepSection::Dependencies,
+    DepSection::DevDependencies,
+    DepSection::BuildDependencies,
+];
+
 /// Parse all workspace data (workspace deps + member deps)
 pub(crate) fn parse_workspace_data(
     workspace_info: &crate::workspace::WorkspaceInfo,
@@ -375,11 +381,15 @@ pub(crate) fn parse_workspace_data(
     let mut all_workspace_refs = Vec::new();
 
     for member in &workspace_info.members {
+        // Only collect explicit deps from enabled sections (for consolidation)
         let parsed = parse_dependencies(&member.manifest_path, sections)?;
         if !parsed.explicit_deps.is_empty() {
             member_deps.insert(member.name.clone(), parsed.explicit_deps);
         }
-        all_workspace_refs.extend(parsed.workspace_refs);
+
+        // Always scan all sections for workspace refs (for unused dep detection)
+        let all_parsed = parse_dependencies(&member.manifest_path, ALL_SECTIONS)?;
+        all_workspace_refs.extend(all_parsed.workspace_refs);
     }
 
     Ok(WorkspaceData {
