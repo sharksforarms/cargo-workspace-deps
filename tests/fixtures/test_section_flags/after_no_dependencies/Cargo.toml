@@ -2,8 +2,6 @@
 members = ["member1", "member2"]
 resolver = "2"
 
-[workspace.dev-dependencies]
-rstest = "0.23"
-
-[workspace.build-dependencies]
+[workspace.dependencies]
 cc = "1.0"
+rstest = "0.23"

@@ -32,7 +32,6 @@ pub(crate) struct Summary {
 pub(crate) struct Dependency {
     pub(crate) name: String,
     pub(crate) version: String,
-    pub(crate) section: String,
     pub(crate) members: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) package: Option<String>,
@@ -46,7 +45,6 @@ pub(crate) struct Dependency {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Conflict {
     pub(crate) name: String,
-    pub(crate) section: String,
     pub(crate) version_specs: Vec<VersionSpec>,
     pub(crate) conflict_types: Vec<ConflictType>,
 }
@@ -87,8 +85,7 @@ impl Output {
                 .map(|dep| Dependency {
                     name: dep.name.clone(),
                     version: dep.version.clone(),
-                    section: dep.section.as_str().to_string(),
-                    members: dep.members.clone(),
+                    members: dep.members.iter().map(|(name, _)| name.clone()).collect(),
                     package: dep.package.clone(),
                     registry: dep.registry.clone(),
                     default_features: dep.default_features,
@@ -100,7 +97,6 @@ impl Output {
                 .iter()
                 .map(|conflict| Conflict {
                     name: conflict.name.clone(),
-                    section: conflict.section.as_str().to_string(),
                     version_specs: conflict
                         .version_specs
                         .iter()

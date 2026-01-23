@@ -4,9 +4,11 @@ use anyhow::Result;
 use cargo_workspace_deps::{Config, OutputFormat};
 use test_helpers::TestWorkspace;
 
+/// Test that version conflicts are detected and resolved across different sections
+/// (e.g., tokio "1.0" in [dependencies] vs tokio "2.0" in [dev-dependencies])
 #[test]
-fn consolidates_across_different_sections() -> Result<()> {
-    let workspace = TestWorkspace::new("test_mixed_sections/before")?;
+fn resolves_version_conflict_across_sections() -> Result<()> {
+    let workspace = TestWorkspace::new("test_cross_section_conflict/before")?;
 
     workspace.run(Config {
         fix: true,
@@ -18,12 +20,12 @@ fn consolidates_across_different_sections() -> Result<()> {
         min_members: 2,
         exclude_members: Vec::new(),
         check: false,
-        version_resolution_strategy: cargo_workspace_deps::VersionResolutionStrategy::Skip,
+        version_resolution_strategy: cargo_workspace_deps::VersionResolutionStrategy::Highest,
         output_format: OutputFormat::Text,
         output_callback: None,
     })?;
 
-    workspace.assert_matches("test_mixed_sections/after")?;
+    workspace.assert_matches("test_cross_section_conflict/after")?;
 
     Ok(())
 }

@@ -133,7 +133,6 @@ fn test_json_output_format() -> Result<()> {
           "member2"
         ]
       },
-      "section": "dependencies",
       "version": "1.0.80"
     },
     {
@@ -153,7 +152,6 @@ fn test_json_output_format() -> Result<()> {
           "member2"
         ]
       },
-      "section": "build-dependencies",
       "version": "0.70.0"
     },
     {
@@ -173,7 +171,6 @@ fn test_json_output_format() -> Result<()> {
           "member2"
         ]
       },
-      "section": "dependencies",
       "version": "1.5.0"
     },
     {
@@ -184,7 +181,6 @@ fn test_json_output_format() -> Result<()> {
         "member3"
       ],
       "name": "rstest",
-      "section": "dev-dependencies",
       "version": "0.23"
     },
     {
@@ -195,7 +191,6 @@ fn test_json_output_format() -> Result<()> {
         "member3"
       ],
       "name": "serde",
-      "section": "dependencies",
       "version": "1.0"
     }
   ],
@@ -205,7 +200,6 @@ fn test_json_output_format() -> Result<()> {
         "default_features"
       ],
       "name": "tokio",
-      "section": "dependencies",
       "version_specs": [
         {
           "default_features": false,

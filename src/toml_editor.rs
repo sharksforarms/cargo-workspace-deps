@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 use toml_edit::{DocumentMut, InlineTable, Item, Table, value};
 
-use crate::dependency::{CommonDependency, DepSection};
+use crate::dependency::CommonDependency;
 
 /// Check if a field should be preserved when converting to workspace dependency
 fn should_preserve_field(key: &str) -> bool {
@@ -21,20 +21,16 @@ macro_rules! copy_preserved_fields {
     };
 }
 
-/// Update a section's dependencies in the workspace table
-fn update_section_deps(
-    workspace: &mut Table,
-    section: DepSection,
-    section_deps: &[&CommonDependency],
-) {
-    let workspace_key = section.as_str();
+/// Update the [workspace.dependencies] table
+fn update_workspace_deps_table(workspace: &mut Table, deps: &[&CommonDependency]) {
+    const WORKSPACE_DEPS_KEY: &str = "dependencies";
 
-    if !workspace.contains_key(workspace_key) {
-        workspace[workspace_key] = Item::Table(Table::new());
+    if !workspace.contains_key(WORKSPACE_DEPS_KEY) {
+        workspace[WORKSPACE_DEPS_KEY] = Item::Table(Table::new());
     }
 
-    if let Some(Item::Table(deps_table)) = workspace.get_mut(workspace_key) {
-        for dep in section_deps {
+    if let Some(Item::Table(deps_table)) = workspace.get_mut(WORKSPACE_DEPS_KEY) {
+        for dep in deps {
             // Only write default-features if false (true is Cargo's default)
             let needs_inline =
                 dep.package.is_some() || dep.registry.is_some() || !dep.default_features;
@@ -89,22 +85,11 @@ pub(crate) fn update_workspace_dependencies(
         anyhow::bail!("Failed to get workspace table");
     };
 
-    for section in [
-        DepSection::Dependencies,
-        DepSection::DevDependencies,
-        DepSection::BuildDependencies,
-    ] {
-        let mut section_deps: Vec<_> = common_deps
-            .iter()
-            .filter(|d| d.section == section)
-            .collect();
+    let mut all_deps: Vec<_> = common_deps.iter().collect();
+    all_deps.sort_by(|a, b| a.name.cmp(&b.name));
 
-        if section_deps.is_empty() {
-            continue;
-        }
-
-        section_deps.sort_by(|a, b| a.name.cmp(&b.name));
-        update_section_deps(workspace, section, &section_deps);
+    if !all_deps.is_empty() {
+        update_workspace_deps_table(workspace, &all_deps);
     }
 
     Ok(doc.to_string())
@@ -124,37 +109,47 @@ pub(crate) fn update_member_dependencies(
         .with_context(|| format!("Failed to parse TOML at {}", manifest_path.display()))?;
 
     for dep in common_deps {
-        if !dep.members.contains(&member_name.to_string()) {
+        // Find sections this member uses for this dependency
+        let member_sections: Vec<_> = dep
+            .members
+            .iter()
+            .filter(|(name, _)| name == member_name)
+            .map(|(_, section)| *section)
+            .collect();
+
+        if member_sections.is_empty() {
             continue;
         }
 
-        let section_key = dep.section.as_str();
+        for section in member_sections {
+            let section_key = section.as_str();
 
-        if let Some(Item::Table(section_table)) = doc.get_mut(section_key)
-            && let Some(existing) = section_table.get(&dep.name)
-        {
-            let mut inline = InlineTable::new();
-            inline.insert("workspace", true.into());
+            if let Some(Item::Table(section_table)) = doc.get_mut(section_key)
+                && let Some(existing) = section_table.get(&dep.name)
+            {
+                let mut inline = InlineTable::new();
+                inline.insert("workspace", true.into());
 
-            // Preserve fields like features, optional, etc. (version/package/registry/default-features go to workspace)
-            match existing {
-                Item::Table(table) => {
-                    copy_preserved_fields!(
-                        inline,
-                        table
-                            .iter()
-                            .filter_map(|(k, v)| v.as_value().map(|val| (k, val)))
-                    );
-                }
-                Item::Value(val) if val.is_inline_table() => {
-                    if let Some(table) = val.as_inline_table() {
-                        copy_preserved_fields!(inline, table.iter());
+                // Preserve fields like features, optional, etc.
+                match existing {
+                    Item::Table(table) => {
+                        copy_preserved_fields!(
+                            inline,
+                            table
+                                .iter()
+                                .filter_map(|(k, v)| v.as_value().map(|val| (k, val)))
+                        );
                     }
+                    Item::Value(val) if val.is_inline_table() => {
+                        if let Some(table) = val.as_inline_table() {
+                            copy_preserved_fields!(inline, table.iter());
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            }
 
-            section_table[&dep.name] = value(inline);
+                section_table[&dep.name] = value(inline);
+            }
         }
     }
 
